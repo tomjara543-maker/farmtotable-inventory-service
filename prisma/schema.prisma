@@ -1,0 +1,59 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model StockByBatch {
+  batchId           String   @id @map("batch_id")
+  productId         String   @map("product_id")
+  producerId        String   @map("producer_id")
+  quantityKg        Float    @map("quantity_kg")
+  quantityAvailable Float    @map("quantity_available")
+  expiryEstimate    String   @map("expiry_estimate")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@index([expiryEstimate])
+  @@index([productId, expiryEstimate])
+  @@map("stock_by_batch")
+}
+
+enum ReservationStatus {
+  RESERVED
+  RELEASED
+}
+
+model Reservation {
+  orderId     String            @id @map("order_id")
+  buyerId     String            @map("buyer_id")
+  status      ReservationStatus @default(RESERVED)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  allocations Allocation[]
+
+  @@map("reservations")
+}
+
+model Allocation {
+  id          String      @id @default(uuid())
+  orderId     String      @map("order_id")
+  reservation Reservation @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+  batchId     String      @map("batch_id")
+  productId   String      @map("product_id")
+  producerId  String      @map("producer_id")
+  quantityKg  Float       @map("quantity_kg")
+
+  @@index([orderId])
+  @@map("allocations")
+}
+
+model ProcessedEvent {
+  eventId     String   @id @map("event_id")
+  eventType   String   @map("event_type")
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@map("processed_events")
+}
