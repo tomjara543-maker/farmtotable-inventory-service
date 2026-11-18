@@ -8,7 +8,7 @@ export interface OrderItem {
   quantity: number;
 }
 
-interface LockedBatch {
+export interface LockedBatch {
   batch_id: string;
   product_id: string;
   producer_id: string;
@@ -22,6 +22,32 @@ const publicAllocation = (a: { batchId: string; productId: string; producerId: s
   quantityKg: a.quantityKg,
 });
 
+export function planAllocation(items: OrderItem[], batches: LockedBatch[]) {
+  const remaining = new Map(batches.map((b) => [b.batch_id, b.quantity_available]));
+  const missing: { productId: string; productName?: string; requested: number; available: number }[] = [];
+  const plan: { batchId: string; productId: string; producerId: string; quantityKg: number }[] = [];
+
+  for (const item of items) {
+    const own = batches.filter((b) => b.product_id === item.productId);
+    const available = round2(own.reduce((s, b) => s + remaining.get(b.batch_id)!, 0));
+    if (available < item.quantity) {
+      missing.push({ productId: item.productId, productName: item.productName, requested: item.quantity, available });
+      continue;
+    }
+    let pending = item.quantity;
+    for (const b of own) {
+      if (pending <= 0) break;
+      const left = remaining.get(b.batch_id)!;
+      const take = round2(Math.min(pending, left));
+      if (take <= 0) continue;
+      plan.push({ batchId: b.batch_id, productId: b.product_id, producerId: b.producer_id, quantityKg: take });
+      remaining.set(b.batch_id, round2(left - take));
+      pending = round2(pending - take);
+    }
+  }
+  return { missing, plan };
+}
+
 export async function reserve(orderId: string, buyerId: string, items: OrderItem[]) {
   const result = await prisma.$transaction(async (tx) => {
     if (await tx.reservation.findUnique({ where: { orderId } })) return null;
@@ -34,25 +60,7 @@ export async function reserve(orderId: string, buyerId: string, items: OrderItem
       ORDER BY expiry_estimate ASC, created_at ASC
       FOR UPDATE`;
 
-    const missing: { productId: string; productName?: string; requested: number; available: number }[] = [];
-    const plan: { batchId: string; productId: string; producerId: string; quantityKg: number }[] = [];
-
-    for (const item of items) {
-      const own = batches.filter((b) => b.product_id === item.productId);
-      const available = round2(own.reduce((s, b) => s + b.quantity_available, 0));
-      if (available < item.quantity) {
-        missing.push({ productId: item.productId, productName: item.productName, requested: item.quantity, available });
-        continue;
-      }
-      let pending = item.quantity;
-      for (const b of own) {
-        if (pending <= 0) break;
-        const take = round2(Math.min(pending, b.quantity_available));
-        plan.push({ batchId: b.batch_id, productId: b.product_id, producerId: b.producer_id, quantityKg: take });
-        b.quantity_available = round2(b.quantity_available - take);
-        pending = round2(pending - take);
-      }
-    }
+    const { missing, plan } = planAllocation(items, batches);
 
     if (missing.length) return { ok: false as const, missing };
 
